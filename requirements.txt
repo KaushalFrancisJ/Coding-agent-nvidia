@@ -1,5 +1,6 @@
 # NVIDIA NIM Coding Agent
 streamlit>=1.35.0
+flet>=0.21.2
 openai>=1.30.0
 mcp>=1.0.0
 python-dotenv>=1.0.0

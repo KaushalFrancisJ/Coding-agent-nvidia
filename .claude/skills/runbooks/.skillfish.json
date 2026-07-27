@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "runbooks",
+  "owner": "datum-cloud",
+  "repo": "claude-code-plugins",
+  "path": "plugins/datum-platform/skills/runbooks",
+  "branch": "main",
+  "sha": "ddd7dd705d45b859f1d103e8b940383332958eb5",
+  "source": "manual"
+}

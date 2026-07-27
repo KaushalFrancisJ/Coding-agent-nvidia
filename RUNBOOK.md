@@ -1,10 +1,81 @@
 # NVIDIA NIM Coding Agent Runbook
 
-Last updated: 2026-07-26
+Last updated: 2026-07-27
 
-## Status: Migration in Progress
+## Status: Flet Migration Complete ✅
 
-The Streamlit UI is **deprecated**. All backend architecture, security fixes, async tools, MCP integration, and streaming infrastructure are complete and stable. The final migration step is replacing the Streamlit UI layer with **Flet** — a compiled desktop application framework for Python.
+The Flet desktop UI (`main.py`) is implemented and replaces the Streamlit UI (`app.py`). All backend architecture, security fixes, async tools, MCP integration, and streaming infrastructure are complete and stable. Run the app with `.venv\Scripts\python.exe main.py`.
+
+---
+
+## Flet UI — Patterns That Work
+
+### Native Async Event Handlers
+
+**Context**: All Flet event handlers (`on_click`, `on_submit`, etc.) can be `async def` functions. Flet runs its own event loop, so `await` works directly — no threading, no queues.
+
+**Pattern**: Make handlers async and use `asyncio.create_task()` for fire-and-forget agent runs.
+
+**Example**:
+```python
+async def send_message() -> None:
+    task = asyncio.create_task(run_agent())
+    state["agent_task"] = task
+
+# On stop button:
+async def stop_generation() -> None:
+    task = state.get("agent_task")
+    if task and not task.done():
+        task.cancel()
+```
+
+**Learned from**: Flet migration — replaces Streamlit's threading+queue pattern
+
+---
+
+### In-place Streaming with ft.Ref
+
+**Context**: To stream tokens into a specific Markdown control without rebuilding the whole list.
+
+**Pattern**: Create a `ft.Ref[ft.Markdown]()`, pass it to the bubble builder, then update `.value` in the event callback and call `page.update()`.
+
+**Example**:
+```python
+md_ref = ft.Ref[ft.Markdown]()
+assistant_row = _assistant_bubble(md_ref)
+chat_view.controls.append(assistant_row)
+
+async def on_event(event: AgentEvent) -> None:
+    if event.role == "assistant" and event.content:
+        accumulated += event.content
+        md_ref.current.value = accumulated + " ▌"  # streaming cursor
+        page.update()
+
+# After completion, strip cursor:
+md_ref.current.value = accumulated
+```
+
+**Learned from**: Flet migration — `page.update()` flushes immediately, no WebSocket round-trip
+
+---
+
+### Mutable State via Dict in Closure
+
+**Context**: Flet's `main(page)` is a closure — `nonlocal` on primitives is brittle across nested async functions. Use a single `state` dict instead.
+
+**Pattern**:
+```python
+state = {
+    "session_id": str(uuid.uuid4()),
+    "messages": [],
+    "processing": False,
+    "agent_task": None,
+}
+# Inside any nested async function:
+state["processing"] = True  # no nonlocal needed
+```
+
+**Learned from**: Flet migration — avoids `nonlocal` hell in deeply nested handlers
 
 ---
 
@@ -36,7 +107,34 @@ The Streamlit UI is **deprecated**. All backend architecture, security fixes, as
 
 ---
 
-## Current UI (Streamlit — to be replaced)
+## Current UI (Flet — `main.py`)
+
+The Streamlit `app.py` is kept for reference but superseded by `main.py`.
+
+### What Works in main.py
+- Native dark-mode desktop window (1200×800, resizable)
+- Chat messages: user bubbles (right-aligned blue), assistant Markdown (left-aligned with code highlighting), tool-executing badges
+- Real-time streaming via `ft.Ref[ft.Markdown]` + `page.update()` — no threads needed
+- Stop button cancels the agent `asyncio.Task` via `.cancel()`
+- Sidebar: chat history list with active highlight, New Chat button
+- Configuration panel: API key status, model dropdown (`ft.ExpansionTile`)
+- MCP panel: Connect button, connected server list with tool counts
+- Welcome banner auto-hides when chat starts
+- Session persistence to `chats/*.json` (same format as before)
+
+### Run Commands
+```bash
+# Development
+.venv\Scripts\python.exe main.py
+
+# Compile to standalone binary (no Python required)
+.venv\Scripts\python.exe -m flet pack main.py
+# → dist/main.exe  (Windows)
+```
+
+---
+
+## ~~Current UI (Streamlit — to be replaced)~~ (Archived)
 
 ### What Works in app.py
 - Chat input/output with `st.chat_message`
