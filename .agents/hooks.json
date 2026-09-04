@@ -1,0 +1,10 @@
+{
+  "task-reminder": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "python .agents/scripts/task_reminder.py"
+      }
+    ]
+  }
+}
