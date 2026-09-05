@@ -75,7 +75,7 @@ class NIMAgent:
     Orchestrates LLM calls, tool execution, and conversation management.
     """
 
-    def __init__(self, config: AgentConfig):
+    def __init__(self, config: AgentConfig, mcp_manager: Optional[MCPClientManager] = None):
         self.config = config
         self.settings = get_settings()
 
@@ -91,11 +91,16 @@ class NIMAgent:
         )
 
         # Initialize tool providers
-        self.mcp_manager = MCPClientManager(
-            self.settings.mcp_config_path
-            if config.mcp_config_path is None
-            else Path(config.mcp_config_path)
-        )
+        self._owns_mcp = False
+        if mcp_manager:
+            self.mcp_manager = mcp_manager
+        else:
+            self._owns_mcp = True
+            self.mcp_manager = MCPClientManager(
+                self.settings.mcp_config_path
+                if config.mcp_config_path is None
+                else Path(config.mcp_config_path)
+            )
 
         # Initialize executor
         self.executor = ToolExecutor([self.workspace, self.mcp_manager])
@@ -110,8 +115,9 @@ class NIMAgent:
         if self._initialized:
             return
 
-        # Connect to MCP servers
-        await self.mcp_manager.connect_all()
+        # Connect to MCP servers only if we own the manager
+        if getattr(self, '_owns_mcp', True):
+            await self.mcp_manager.connect_all()
 
         # Register MCP tools
         mcp_tools = await self.mcp_manager.get_tools()
@@ -121,7 +127,8 @@ class NIMAgent:
 
     async def close(self) -> None:
         """Clean up resources."""
-        await self.mcp_manager.cleanup()
+        if getattr(self, '_owns_mcp', False):
+            await self.mcp_manager.cleanup()
         await self.llm.close()
 
     async def __aenter__(self):
