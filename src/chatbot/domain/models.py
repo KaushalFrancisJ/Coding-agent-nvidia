@@ -31,14 +31,16 @@ class Message:
         if self.content is not None:
             d["content"] = self.content
         if self.tool_calls:
-            d["tool_calls"] = [
-                {
+            d["tool_calls"] = []
+            for tc in self.tool_calls:
+                args = tc["arguments"]
+                if not isinstance(args, str):
+                    args = json.dumps(args)
+                d["tool_calls"].append({
                     "id": tc["id"],
                     "type": "function",
-                    "function": {"name": tc["name"], "arguments": json.dumps(tc["arguments"])}
-                }
-                for tc in self.tool_calls
-            ]
+                    "function": {"name": tc["name"], "arguments": args}
+                })
         if self.tool_call_id:
             d["tool_call_id"] = self.tool_call_id
         if self.name:
