@@ -103,7 +103,6 @@ def _user_bubble(text: str) -> ft.Control:
                 bgcolor=_USER_BG,
                 padding=ft.Padding(left=14, right=14, top=10, bottom=10),
                 border_radius=12,
-                max_width=640,
             )
         ],
         alignment=ft.MainAxisAlignment.END,
@@ -146,7 +145,7 @@ def _tool_bubble(name: str, arguments: dict | None) -> ft.Control:
     ]
     if args_text:
         controls.append(
-            ft.Text(args_text, font_family="monospace", size=11,
+            ft.Text(args_text, style=ft.TextStyle(style=ft.TextStyle(font_family="monospace")), size=11,
                     color=ft.Colors.GREY_300, selectable=True)
         )
     return ft.Container(
@@ -283,7 +282,7 @@ async def main(page: ft.Page) -> None:
         on_click=lambda e: asyncio.create_task(_send_message()),
     )
 
-    stop_btn = ft.ElevatedButton(
+    stop_btn = ft.Button(
         "⏹  Stop Generation",
         icon=ft.Icons.STOP_CIRCLE_OUTLINED,
         bgcolor=ft.Colors.RED_900,
@@ -300,23 +299,84 @@ async def main(page: ft.Page) -> None:
     # -----------------------------------------------------------------------
     # Sidebar — configuration
     # -----------------------------------------------------------------------
-    api_key_status = ft.Row(
-        [
-            ft.Icon(ft.Icons.CHECK_CIRCLE, color=ft.Colors.GREEN_400, size=16),
-            ft.Text("API Key Loaded", color=ft.Colors.GREEN_400, size=12),
-        ]
-        if get_api_key()
-        else [
-            ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ft.Colors.ORANGE_400, size=16),
-            ft.Text("API Key Required — set NVIDIA_API_KEY", color=ft.Colors.ORANGE_400, size=12),
-        ],
-        spacing=4,
+    def _save_api_key(e):
+        import os
+        val = e.control.value.strip()
+        os.environ["NVIDIA_API_KEY"] = val
+        settings.nvidia_api_key = val
+        
+        env_path = ".env"
+        lines = []
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as env_file:
+                lines = env_file.readlines()
+        
+        found = False
+        for i in range(len(lines)):
+            if lines[i].startswith("NVIDIA_API_KEY="):
+                lines[i] = f"NVIDIA_API_KEY={val}\\n"
+                found = True
+                break
+        if not found:
+            lines.append(f"\\nNVIDIA_API_KEY={val}\\n")
+            
+        with open(env_path, "w", encoding="utf-8") as env_file:
+            env_file.writelines(lines)
+
+        e.control.border_color = ft.Colors.GREEN_400 if val else ft.Colors.RED_400
+        e.page.update()
+
+    api_key_field = ft.TextField(
+        label="NVIDIA_API_KEY",
+        value=settings.nvidia_api_key or get_api_key(),
+        password=True,
+        can_reveal_password=True,
+        text_size=12,
+        height=40,
+        content_padding=10,
+        on_change=_save_api_key,
+        border_color=ft.Colors.GREEN_400 if (settings.nvidia_api_key or get_api_key()) else ft.Colors.RED_400,
     )
+    api_key_status = ft.Container(api_key_field, padding=ft.Padding(bottom=8, left=0, right=0, top=0))
 
     env_model = get_env_model()
     _model_opts = list(MODEL_OPTIONS)
     if env_model not in _model_opts:
         _model_opts.insert(0, env_model)
+
+    def _add_model(e):
+        def close_dlg(e2):
+            dlg.open = False
+            page.update()
+        def save_dlg(e2):
+            m = new_m_field.value.strip()
+            if m and m not in _model_opts:
+                _model_opts.append(m)
+                model_dropdown.options.append(ft.dropdown.Option(m))
+                model_dropdown.value = m
+            dlg.open = False
+            page.update()
+        
+        new_m_field = ft.TextField(label="Model ID")
+        dlg = ft.AlertDialog(
+            title=ft.Text("Add Model"),
+            content=new_m_field,
+            actions=[
+                ft.TextButton("Cancel", on_click=close_dlg),
+                ft.TextButton("Add", on_click=save_dlg),
+            ]
+        )
+        page.overlay.append(dlg)
+        dlg.open = True
+        page.update()
+
+    def _remove_model(e):
+        current = model_dropdown.value
+        if current and current in _model_opts:
+            _model_opts.remove(current)
+            model_dropdown.options = [ft.dropdown.Option(m) for m in _model_opts]
+            model_dropdown.value = _model_opts[0] if _model_opts else None
+            page.update()
 
     model_dropdown = ft.Dropdown(
         label="Model",
@@ -327,13 +387,23 @@ async def main(page: ft.Page) -> None:
         label_style=ft.TextStyle(size=12, color=ft.Colors.GREY_400),
         bgcolor=ft.Colors.GREY_800,
         border_radius=8,
+        expand=True,
+    )
+    
+    model_row = ft.Row(
+        [
+            model_dropdown, 
+            ft.IconButton(ft.Icons.ADD, on_click=_add_model, tooltip="Add custom model"),
+            ft.IconButton(ft.Icons.DELETE, on_click=_remove_model, tooltip="Remove selected model", icon_color=ft.Colors.RED_400)
+        ], 
+        spacing=4
     )
 
     config_tile = ft.ExpansionTile(
         title=ft.Text("⚙️  Configuration", size=13),
         controls=[
             ft.Container(
-                ft.Column([api_key_status, model_dropdown], spacing=8),
+                ft.Column([api_key_status, model_row], spacing=8),
                 padding=ft.Padding(left=8, right=8, bottom=8),
             )
         ],
@@ -364,18 +434,69 @@ async def main(page: ft.Page) -> None:
 
     _refresh_mcp_status()
 
-    connect_mcp_btn = ft.ElevatedButton(
-        "🔌  Connect MCP Servers",
+    def _edit_mcp_config(e):
+        def close_dlg(e2):
+            dlg.open = False
+            page.update()
+        def save_dlg(e2):
+            try:
+                content = editor.value
+                import json
+                json.loads(content) # validate JSON
+                with open(settings.mcp_config_path, "w", encoding="utf-8") as config_file:
+                    config_file.write(content)
+                dlg.open = False
+                page.update()
+            except Exception as exc:
+                page.overlay.append(ft.SnackBar(ft.Text(f"Invalid JSON: {exc}"), bgcolor=ft.Colors.RED_900))
+                page.overlay[-1].open = True
+                page.update()
+        
+        try:
+            with open(settings.mcp_config_path, "r", encoding="utf-8") as config_file:
+                current_config = config_file.read()
+        except:
+            current_config = "{}"
+
+        editor = ft.TextField(
+            value=current_config,
+            multiline=True,
+            min_lines=10,
+            max_lines=20,
+            text_size=12,
+            style=ft.TextStyle(font_family="monospace")
+        )
+        dlg = ft.AlertDialog(
+            title=ft.Text("Edit MCP Config"),
+            content=editor,
+            actions=[
+                ft.TextButton("Cancel", on_click=close_dlg),
+                ft.TextButton("Save", on_click=save_dlg),
+            ]
+        )
+        page.overlay.append(dlg)
+        dlg.open = True
+        page.update()
+
+    connect_mcp_btn = ft.Button(
+        "🔌 Connect",
         icon=ft.Icons.ELECTRICAL_SERVICES,
-        on_click=lambda e: asyncio.create_task(_connect_mcp()),
+        on_click=lambda e: page.run_task(_connect_mcp),
         style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_900),
+        expand=True,
     )
+    edit_mcp_btn = ft.Button(
+        "Edit Config",
+        icon=ft.Icons.EDIT,
+        on_click=_edit_mcp_config,
+    )
+    mcp_buttons_row = ft.Row([connect_mcp_btn, edit_mcp_btn], spacing=4)
 
     mcp_tile = ft.ExpansionTile(
         title=ft.Text("🔌  MCP Servers", size=13),
         controls=[
             ft.Container(
-                ft.Column([connect_mcp_btn, mcp_status_col], spacing=8),
+                ft.Column([mcp_buttons_row, mcp_status_col], spacing=8),
                 padding=ft.Padding(left=8, right=8, bottom=8),
             )
         ],
@@ -386,7 +507,7 @@ async def main(page: ft.Page) -> None:
     # -----------------------------------------------------------------------
     # Sidebar layout
     # -----------------------------------------------------------------------
-    new_chat_btn = ft.ElevatedButton(
+    new_chat_btn = ft.Button(
         "➕  New Chat",
         icon=ft.Icons.ADD,
         expand=True,
@@ -504,6 +625,12 @@ async def main(page: ft.Page) -> None:
     # -----------------------------------------------------------------------
     # Helper: rebuild chat_view from state["messages"]
     # -----------------------------------------------------------------------
+    def _save_api_key(e):
+        import os
+        val = e.control.value.strip()
+        os.environ["NVIDIA_API_KEY"] = val
+        settings.nvidia_api_key = val
+
     def _rebuild_chat_view() -> None:
         chat_view.controls.clear()
         has_content = False
@@ -584,9 +711,16 @@ async def main(page: ft.Page) -> None:
                 })
                 page.update()
 
+            elif event.role == "error":
+                page.open(ft.SnackBar(
+                    ft.Text(f"Agent error: {event.error}"),
+                    bgcolor=ft.Colors.RED_900,
+                ))
+                page.update()
+
         async def run_agent() -> None:
             try:
-                agent = NIMAgent(config)
+                agent = NIMAgent(config, mcp_manager=mcp_manager)
                 await agent.initialize()
                 try:
                     final_messages = await agent.run_stream(agent_messages, on_event)
@@ -608,10 +742,7 @@ async def main(page: ft.Page) -> None:
                 save_chat(state["session_id"], state["messages"], state["timestamp"])
 
             except Exception as exc:
-                page.open(ft.SnackBar(
-                    ft.Text(f"Agent error: {exc}"),
-                    bgcolor=ft.Colors.RED_900,
-                ))
+                page.overlay.append(ft.SnackBar(ft.Text(f"Agent error: {exc}", color=ft.Colors.WHITE), bgcolor=ft.Colors.RED_900, open=True))
 
             finally:
                 _set_processing(False)
@@ -664,7 +795,7 @@ async def main(page: ft.Page) -> None:
     # -----------------------------------------------------------------------
     # Event: connect MCP servers
     # -----------------------------------------------------------------------
-    async def _connect_mcp() -> None:
+    async def _connect_mcp(e=None) -> None:
         connect_mcp_btn.disabled = True
         connect_mcp_btn.text = "Connecting..."
         page.update()
@@ -672,10 +803,7 @@ async def main(page: ft.Page) -> None:
             await mcp_manager.connect_all()
             _refresh_mcp_status()
         except Exception as exc:
-            page.open(ft.SnackBar(
-                ft.Text(f"MCP connection error: {exc}"),
-                bgcolor=ft.Colors.RED_900,
-            ))
+            page.overlay.append(ft.SnackBar(ft.Text(f"MCP connection error: {exc}", color=ft.Colors.WHITE), bgcolor=ft.Colors.RED_900, open=True))
         finally:
             connect_mcp_btn.disabled = False
             connect_mcp_btn.text = "🔌  Connect MCP Servers"
@@ -732,6 +860,7 @@ async def main(page: ft.Page) -> None:
     # -----------------------------------------------------------------------
     _refresh_chat_list()
     page.update()
+    page.run_task(_connect_mcp)
 
 
 # ---------------------------------------------------------------------------
